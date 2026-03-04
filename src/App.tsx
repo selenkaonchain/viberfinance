@@ -88,7 +88,7 @@ function ConnectPrompt({ bc }: { bc: BC }) {
       </button>
       <p style={{ color: 'var(--text-2)', fontSize: 12, marginTop: 16 }}>
         Don't have OP_WALLET?{' '}
-        <a href="https://chromewebstore.google.com/detail/op-wallet/ohenbbcekpmpjbgojdonnmkkbhbmbioo" target="_blank" rel="noopener">
+        <a href="https://chromewebstore.google.com/detail/opwallet/pmbjpcmaaladnfpacpmhmnfmpklgbdjb" target="_blank" rel="noopener">
           Install from Chrome Web Store
         </a>
       </p>

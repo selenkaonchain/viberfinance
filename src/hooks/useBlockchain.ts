@@ -74,6 +74,14 @@ export function useBlockchain() {
         }
     }, []);
 
+    /**
+     * Load PILL token info & balance.
+     * BOB guidance:
+     *   - Use contract.metadata() for token info (1 call, not 4)
+     *   - For balanceOf(), MUST pass hex public key (0x...), NOT Bitcoin address
+     *   - wc.publicKey from WalletConnect gives us the hex key directly
+     *   - Fallback: provider.getPublicKeyInfo(walletAddress) to convert address → pubkey
+     */
     const loadPillBalance = useCallback(async (): Promise<PillInfo | null> => {
         if (!wc.walletAddress) {
             console.warn('[PILL] No wallet address available');
@@ -86,11 +94,10 @@ export function useBlockchain() {
             const provider = getProvider();
 
             console.log('[PILL] Loading balance...');
-            console.log('[PILL] walletAddress (string):', wc.walletAddress);
+            console.log('[PILL] walletAddress:', wc.walletAddress);
+            console.log('[PILL] publicKey:', wc.publicKey ?? 'null');
             console.log('[PILL] address (Address obj):', wc.address ? 'present' : 'null');
-            console.log('[PILL] Contract:', PILL_CONTRACT);
 
-            // Create contract — try with sender if available, otherwise without
             const contract = getContract<IOP20Contract>(
                 PILL_CONTRACT,
                 OP_20_ABI,
@@ -99,63 +106,74 @@ export function useBlockchain() {
                 wc.address ?? undefined,
             );
 
+            // --- Token metadata (single RPC call per BOB) ---
             let name = 'PILL';
             let symbol = 'PILL';
             let decimals = 8;
 
             try {
-                const nameResult = await contract.name();
-                name = nameResult.properties.name || name;
-                console.log('[PILL] name:', name);
+                const meta = await contract.metadata();
+                name = meta.properties.name || name;
+                symbol = meta.properties.symbol || symbol;
+                decimals = Number(meta.properties.decimals ?? 8);
+                console.log('[PILL] metadata:', { name, symbol, decimals });
             } catch (e) {
-                console.warn('[PILL] name() failed:', e);
+                console.warn('[PILL] metadata() failed, trying individual calls:', e);
+                // Fallback to individual calls if metadata() is not available
+                try {
+                    const nr = await contract.name();
+                    name = nr.properties.name || name;
+                } catch (_) { /* use default */ }
+                try {
+                    const sr = await contract.symbol();
+                    symbol = sr.properties.symbol || symbol;
+                } catch (_) { /* use default */ }
+                try {
+                    const dr = await contract.decimals();
+                    decimals = Number(dr.properties.decimals ?? 8);
+                } catch (_) { /* use default */ }
             }
 
-            try {
-                const symResult = await contract.symbol();
-                symbol = symResult.properties.symbol || symbol;
-                console.log('[PILL] symbol:', symbol);
-            } catch (e) {
-                console.warn('[PILL] symbol() failed:', e);
-            }
-
-            try {
-                const decResult = await contract.decimals();
-                decimals = Number(decResult.properties.decimals ?? 8);
-                console.log('[PILL] decimals:', decimals);
-            } catch (e) {
-                console.warn('[PILL] decimals() failed:', e);
-            }
-
+            // --- Balance: MUST use hex public key per BOB ---
             let balance = 0n;
-            if (wc.address) {
-                // Primary: use Address object
+
+            // Strategy 1: Resolve public key Address via provider.getPublicKeyInfo
+            // This converts a wallet address string to the public key Address that balanceOf expects
+            let pubKeyAddress: Address | undefined;
+            try {
+                console.log('[PILL] Resolving public key via getPublicKeyInfo...');
+                pubKeyAddress = await provider.getPublicKeyInfo(wc.walletAddress, false);
+                console.log('[PILL] Resolved pubKeyAddress:', pubKeyAddress ? 'present' : 'undefined');
+            } catch (e) {
+                console.warn('[PILL] getPublicKeyInfo failed:', e);
+            }
+
+            // Strategy 2: If WalletConnect gives us publicKey (hex string), convert to Address
+            if (!pubKeyAddress && wc.publicKey) {
                 try {
-                    const bal = await contract.balanceOf(wc.address);
-                    balance = bal.properties.balance ?? 0n;
-                    console.log('[PILL] balance (Address obj):', balance.toString());
+                    console.log('[PILL] Using wc.publicKey to build Address...');
+                    const { Address: Addr } = await import('@btc-vision/transaction');
+                    pubKeyAddress = new Addr(Buffer.from(wc.publicKey.replace(/^0x/, ''), 'hex'));
+                    console.log('[PILL] Built Address from publicKey');
                 } catch (e) {
-                    console.warn('[PILL] balanceOf(Address) failed:', e);
+                    console.warn('[PILL] Address from publicKey failed:', e);
                 }
             }
 
-            // Fallback: if Address object is null or balance is still 0,
-            // try using the string wallet address
-            if (balance === 0n && wc.walletAddress) {
+            // Strategy 3: Fall back to wc.address (the wallet Address object)
+            const balAddr = pubKeyAddress ?? wc.address ?? undefined;
+
+            if (balAddr) {
                 try {
-                    const contract2 = getContract<IOP20Contract>(
-                        PILL_CONTRACT,
-                        OP_20_ABI,
-                        provider,
-                        NETWORK,
-                    );
-                    // The SDK accepts string | Address for balanceOf
-                    const bal2 = await contract2.balanceOf(wc.walletAddress as unknown as Address);
-                    balance = bal2.properties.balance ?? 0n;
-                    console.log('[PILL] balance (string fallback):', balance.toString());
-                } catch (e2) {
-                    console.warn('[PILL] balanceOf(string) fallback also failed:', e2);
+                    console.log('[PILL] Calling balanceOf...');
+                    const bal = await contract.balanceOf(balAddr);
+                    balance = bal.properties.balance ?? 0n;
+                    console.log('[PILL] balance:', balance.toString());
+                } catch (e) {
+                    console.warn('[PILL] balanceOf failed:', e);
                 }
+            } else {
+                console.warn('[PILL] No usable address for balanceOf');
             }
 
             const info: PillInfo = { name, symbol, decimals, balance };
@@ -170,7 +188,7 @@ export function useBlockchain() {
         } finally {
             setLoading(false);
         }
-    }, [wc.address, wc.walletAddress]);
+    }, [wc.address, wc.walletAddress, wc.publicKey]);
 
     // Fetch block on mount and periodically
     useEffect(() => {

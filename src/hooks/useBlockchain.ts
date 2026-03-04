@@ -7,17 +7,19 @@ import { useWalletConnect } from '@btc-vision/walletconnect';
 const NETWORK = networks.opnetTestnet;
 const RPC_URL = 'https://testnet.opnet.org';
 
+// $PILL token contract on OP_NET testnet
+export const PILL_CONTRACT = '0xfb7df2f08d8042d4df0506c0d4cee3cfa5f2d7b02ef01ec76dd699551393a438';
+
 interface BlockData {
     height: number;
     hash: string;
 }
 
-interface TokenInfo {
+export interface PillInfo {
     name: string;
     symbol: string;
     decimals: number;
     balance: bigint;
-    address: string;
 }
 
 export function useBlockchain() {
@@ -25,7 +27,7 @@ export function useBlockchain() {
     const providerRef = useRef<JSONRpcProvider | null>(null);
 
     const [blockData, setBlockData] = useState<BlockData | null>(null);
-    const [tokenInfo, setTokenInfo] = useState<TokenInfo | null>(null);
+    const [pillInfo, setPillInfo] = useState<PillInfo | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string>('');
 
@@ -51,7 +53,7 @@ export function useBlockchain() {
 
     const disconnectWallet = useCallback(() => {
         wc.disconnect();
-        setTokenInfo(null);
+        setPillInfo(null);
     }, [wc]);
 
     const fetchBlockData = useCallback(async (): Promise<BlockData | null> => {
@@ -71,25 +73,25 @@ export function useBlockchain() {
         }
     }, []);
 
-    const loadToken = useCallback(async (tokenAddress: string): Promise<TokenInfo | null> => {
+    const loadPillBalance = useCallback(async (): Promise<PillInfo | null> => {
+        if (!wc.address) return null;
         try {
             setLoading(true);
             setError('');
             const provider = getProvider();
 
             const contract = getContract<IOP20Contract>(
-                tokenAddress,
+                PILL_CONTRACT,
                 OP_20_ABI,
                 provider,
                 NETWORK,
                 wc.address ?? undefined,
             );
 
-            let name = 'Unknown';
-            let symbol = '???';
-            let decimals = 18;
+            let name = 'PILL';
+            let symbol = 'PILL';
+            let decimals = 8;
 
-            // Try individual calls with error checks
             try {
                 const nameResult = await contract.name();
                 if (!('error' in nameResult)) {
@@ -107,27 +109,24 @@ export function useBlockchain() {
             try {
                 const decResult = await contract.decimals();
                 if (!('error' in decResult)) {
-                    decimals = Number((decResult.properties as Record<string, unknown>)?.['decimals'] ?? 18);
+                    decimals = Number((decResult.properties as Record<string, unknown>)?.['decimals'] ?? 8);
                 }
             } catch { /* skip */ }
 
             let balance = 0n;
-            if (wc.address) {
-                try {
-                    const bal = await contract.balanceOf(wc.address);
-                    if (!('error' in bal)) {
-                        balance = BigInt(((bal.properties as Record<string, unknown>)?.['balance'] ?? 0n).toString());
-                    }
-                } catch { /* skip */ }
-            }
+            try {
+                const bal = await contract.balanceOf(wc.address);
+                if (!('error' in bal)) {
+                    balance = BigInt(((bal.properties as Record<string, unknown>)?.['balance'] ?? 0n).toString());
+                }
+            } catch { /* skip */ }
 
-            const info: TokenInfo = { name, symbol, decimals, balance, address: tokenAddress };
-            setTokenInfo(info);
+            const info: PillInfo = { name, symbol, decimals, balance };
+            setPillInfo(info);
             return info;
         } catch (err) {
-            const msg = err instanceof Error ? err.message : 'Failed to load token';
+            const msg = err instanceof Error ? err.message : 'Failed to load PILL balance';
             setError(msg);
-            setTokenInfo(null);
             return null;
         } finally {
             setLoading(false);
@@ -141,18 +140,25 @@ export function useBlockchain() {
         return () => clearInterval(interval);
     }, [fetchBlockData]);
 
+    // Auto-load PILL balance when wallet connects
+    useEffect(() => {
+        if (connected && wc.address) {
+            loadPillBalance();
+        }
+    }, [connected, wc.address, loadPillBalance]);
+
     return {
         connected,
         walletAddress,
         btcTotal,
         blockData,
-        tokenInfo,
+        pillInfo,
         loading,
         error,
         connectWallet,
         disconnectWallet,
         fetchBlockData,
-        loadToken,
+        loadPillBalance,
         setError,
     };
 }

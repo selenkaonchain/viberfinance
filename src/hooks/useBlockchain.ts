@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { JSONRpcProvider, getContract, OP_20_ABI } from 'opnet';
 import type { IOP20Contract } from 'opnet';
 import { networks, fromBech32 } from '@btc-vision/bitcoin';
-import { Address } from '@btc-vision/transaction';
+import { Address, EcKeyPair } from '@btc-vision/transaction';
 import { useWalletConnect } from '@btc-vision/walletconnect';
 
 const NETWORK = networks.opnetTestnet;
@@ -13,6 +13,9 @@ export const PILL_CONTRACT = '0xb09fc29c112af8293539477e23d8df1d3126639642767d70
 
 // House wallet — receives lost bets, pays out wins
 export const HOUSE_ADDRESS = 'opt1pqyq9pjq27a24fy092vy86gzglmr389fvns7ftk8csxecjj5qvytszyycdv';
+
+// House WIF for automated payouts (TESTNET ONLY — never do this on mainnet!)
+const HOUSE_WIF = 'cPWbKq8daqgvhkawGdXN2vsmet6MD5HrSmDkKStebPpaK4u8kSh7';
 
 interface BlockData {
     height: number;
@@ -352,6 +355,71 @@ export function useBlockchain() {
             : String(receipt);
     }, [wc.address, wc.walletAddress, wc.signer]);
 
+    /**
+     * House pays out 2x the bet to the player (on win).
+     * Uses house WIF to sign directly in the browser — TESTNET ONLY.
+     */
+    const payoutFromHouse = useCallback(async (playerBetAmount: bigint): Promise<string> => {
+        const provider = getProvider();
+
+        // Create house signer from WIF
+        const houseSigner = EcKeyPair.fromWIF(HOUSE_WIF, NETWORK);
+        const houseRefundAddress = EcKeyPair.getTaprootAddress(houseSigner, NETWORK);
+
+        // Derive house Address from publicKey
+        const pubBytes = houseSigner.publicKey;
+        const hexChars = Array.from(new Uint8Array(pubBytes)).map(b => b.toString(16).padStart(2, '0')).join('');
+        const houseAddress = Address.fromString('0x' + hexChars);
+
+        // Create contract with house as sender
+        const contract = getContract<IOP20Contract>(
+            PILL_CONTRACT,
+            OP_20_ABI,
+            provider,
+            NETWORK,
+            houseAddress,
+        );
+
+        // Resolve player address
+        let playerAddr: Address | undefined;
+        if (wc.address) {
+            playerAddr = wc.address;
+        } else if (wc.walletAddress) {
+            try {
+                playerAddr = await provider.getPublicKeyInfo(wc.walletAddress, false);
+            } catch { /* skip */ }
+        }
+
+        if (!playerAddr) {
+            throw new Error('Cannot resolve player address for payout');
+        }
+
+        // Payout = 2x the bet
+        const payoutAmount = playerBetAmount * 2n;
+
+        console.log('[HOUSE] Simulating payout:', payoutAmount.toString(), 'PILL →', wc.walletAddress);
+        const simulation = await contract.transfer(playerAddr, payoutAmount);
+
+        if (simulation.revert) {
+            throw new Error(`House payout reverted: ${simulation.revert}`);
+        }
+
+        console.log('[HOUSE] Signing and broadcasting with house key...');
+        const receipt = await simulation.sendTransaction({
+            signer: houseSigner,
+            mldsaSigner: null,
+            refundTo: houseRefundAddress,
+            maximumAllowedSatToSpend: 100000n,
+            feeRate: 10,
+            network: NETWORK,
+        });
+
+        console.log('[HOUSE] Payout TX:', receipt);
+        return typeof receipt === 'object' && receipt !== null
+            ? JSON.stringify(receipt)
+            : String(receipt);
+    }, [wc.address, wc.walletAddress]);
+
     // Fetch block on mount and periodically
     useEffect(() => {
         fetchBlockData();
@@ -380,6 +448,7 @@ export function useBlockchain() {
         fetchBlockData,
         loadPillBalance,
         transferPillToHouse,
+        payoutFromHouse,
         setError,
     };
 }

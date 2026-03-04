@@ -163,32 +163,17 @@ export function App() {
         setLastPayout(won ? betAmount : -betAmount);
         setIsFlipping(false);
 
-        // ═══ STEP 3: If won → request payout from house backend ═══
+        // ═══ STEP 3: If won → house pays 2x directly from browser ═══
         if (won) {
             try {
-                setTxStatus('🎉 YOU WON! Requesting payout from house...');
-                const resp = await fetch('/api/payout', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        playerAddress: bc.walletAddress,
-                        amount: betAmountRaw.toString(),
-                        blockHash: hash,
-                        blockHeight: block?.height || 0,
-                        betChoice: choice,
-                    }),
-                });
-                const data = await resp.json();
-                if (data.success) {
-                    setTxStatus(`🎉 Payout sent! +${formatPill(betAmount * 2)} $PILL`);
-                    console.log('[GAME] Payout receipt:', data.receipt);
-                } else {
-                    setTxStatus(`⚠️ Won but payout failed: ${data.error}`);
-                    console.error('[GAME] Payout error:', data);
-                }
+                setTxStatus('🎉 YOU WON! Sending payout from house...');
+                const payoutReceipt = await bc.payoutFromHouse(betAmountRaw);
+                setTxStatus(`🎉 Payout sent! +${formatPill(betAmount * 2)} $PILL`);
+                console.log('[GAME] Payout receipt:', payoutReceipt);
             } catch (e: any) {
-                setTxStatus(`⚠️ Won but payout request failed: ${e?.message?.slice(0, 60)}`);
-                console.error('[GAME] Payout fetch failed:', e);
+                const msg = e?.message || 'Payout failed';
+                setTxStatus(`⚠️ Won but payout failed: ${msg.slice(0, 80)}`);
+                console.error('[GAME] Payout failed:', e);
             }
         } else {
             setTxStatus('💀 You lost. House keeps your bet.');

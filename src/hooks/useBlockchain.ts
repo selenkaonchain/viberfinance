@@ -9,7 +9,7 @@ const NETWORK = networks.opnetTestnet;
 const RPC_URL = 'https://testnet.opnet.org';
 
 // $PILL token contract on OP_NET testnet
-export const PILL_CONTRACT = '0xfb7df2f08d8042d4df0506c0d4cee3cfa5f2d7b02ef01ec76dd699551393a438';
+export const PILL_CONTRACT = '0xb09fc29c112af8293539477e23d8df1d3126639642767d707277131352040cbb';
 
 interface BlockData {
     height: number;

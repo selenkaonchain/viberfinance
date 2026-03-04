@@ -298,35 +298,6 @@ export function App() {
                 </div>
             )}
 
-            {/* Debug Panel — shows wallet & balance diagnostic info */}
-            {bc.connected && bc.debugInfo && (
-                <div className="debug-panel">
-                    <details open>
-                        <summary>🔍 Debug: PILL Balance Diagnostic</summary>
-                        <div className="debug-grid">
-                            <span>walletAddress:</span><span>{bc.debugInfo.walletAddress || '—'}</span>
-                            <span>publicKey:</span><span>{bc.debugInfo.publicKey || 'NULL'}</span>
-                            <span>mldsaPublicKey:</span><span>{bc.debugInfo.mldsaPublicKey || 'NULL'}</span>
-                            <span>hashedMLDSAKey:</span><span>{bc.debugInfo.hashedMLDSAKey || 'NULL'}</span>
-                            <span>Address object:</span><span>{bc.debugInfo.addressObj}</span>
-                            <span>Address p2op:</span><span>{bc.debugInfo.addressP2OP || 'NULL'}</span>
-                            <span>Address hex:</span><span>{bc.debugInfo.addressHex || 'NULL'}</span>
-                            <span>metadata():</span><span>{bc.debugInfo.metadataResult}</span>
-                            <span>Balance via:</span><span>{bc.debugInfo.balanceStrategy}</span>
-                            <span>Balance raw:</span><span>{bc.debugInfo.balanceResult}</span>
-                        </div>
-                        {bc.debugInfo.errors.length > 0 && (
-                            <div className="debug-errors">
-                                <strong>Errors ({bc.debugInfo.errors.length}):</strong>
-                                {bc.debugInfo.errors.map((e, i) => (
-                                    <div key={i} className="debug-err">{e}</div>
-                                ))}
-                            </div>
-                        )}
-                    </details>
-                </div>
-            )}
-
             {/* Hero / Game Area */}
             <main className="game-area">
                 <div className="game-container">

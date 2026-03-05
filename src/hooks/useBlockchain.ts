@@ -413,11 +413,9 @@ export function useBlockchain() {
             throw new Error(`House payout reverted: ${simulation.revert}`);
         }
 
-        // CRITICAL FIX: The SDK's UTXOsManager caches UTXO results per-address
-        // for 10 seconds, ignoring the optimize parameter on cache hits.
-        // btc_getUTXOs returns EMPTY with optimize=true but correct data with optimize=false.
-        // So we MUST clean the cache first, then fetch with optimize=false.
-        console.log('[HOUSE] Cleaning UTXO cache and fetching with optimize=false...');
+        // Fetch UTXOs: clean cache, then fetch with optimize=false
+        // (btc_getUTXOs returns EMPTY with optimize=true for this address)
+        console.log('[HOUSE] Fetching UTXOs with optimize=false...');
         provider.utxoManager.clean(HOUSE_ADDRESS);
 
         let houseUtxos: any[];
@@ -433,55 +431,71 @@ export function useBlockchain() {
             houseUtxos = [];
         }
 
-        // Fallback: if SDK returned empty, fetch manually via RPC
+        // Fallback: manual RPC fetch
         if (!houseUtxos || houseUtxos.length === 0) {
-            console.log('[HOUSE] Trying manual RPC fetch...');
+            console.log('[HOUSE] Manual RPC fetch...');
             const rpcResp = await fetch(RPC_URL + '/api/v1/json-rpc', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    jsonrpc: '2.0',
-                    id: 1,
+                    jsonrpc: '2.0', id: 1,
                     method: 'btc_getUTXOs',
                     params: [HOUSE_ADDRESS, false],
                 }),
             });
             const rpcJson = await rpcResp.json();
-            console.log('[HOUSE] Manual RPC response:', JSON.stringify(rpcJson).slice(0, 1000));
-
             const rawTxs = rpcJson.result?.raw || [];
-            const confirmed = rpcJson.result?.confirmed || [];
-            const pending = rpcJson.result?.pending || [];
-            const allRaw = [...confirmed, ...pending];
-
-            houseUtxos = allRaw.map((utxo: any) => {
-                const rawHex = rawTxs[utxo.raw];
-                return new UTXO({ ...utxo, raw: rawHex }, false);
-            });
-            console.log('[HOUSE] Manual UTXO parse:', houseUtxos.length, 'UTXOs');
+            const allRaw = [...(rpcJson.result?.confirmed || []), ...(rpcJson.result?.pending || [])];
+            houseUtxos = allRaw.map((utxo: any) => new UTXO({ ...utxo, raw: rawTxs[utxo.raw] }, false));
         }
 
-        console.log('[HOUSE] Found', houseUtxos.length, 'UTXOs, total:', houseUtxos.reduce((s: bigint, u: any) => s + u.value, 0n).toString(), 'sats');
+        // Force-materialize lazy getters on UTXOs so they are plain data
+        // (prevents BroadcastChannel postMessage serialization error)
+        for (const utxo of houseUtxos) {
+            if (utxo.nonWitnessUtxo) {
+                const materialized = new Uint8Array(utxo.nonWitnessUtxo);
+                Object.defineProperty(utxo, 'nonWitnessUtxo', {
+                    value: materialized,
+                    writable: false,
+                    enumerable: true,
+                    configurable: true,
+                });
+            }
+        }
+
+        console.log('[HOUSE] UTXOs:', houseUtxos.length, ', total:', houseUtxos.reduce((s: bigint, u: any) => s + u.value, 0n).toString(), 'sats');
 
         if (!houseUtxos || houseUtxos.length === 0) {
             throw new Error('House wallet has no UTXOs available. Please fund the house wallet.');
         }
 
-        console.log('[HOUSE] Signing and broadcasting with house key + ML-DSA...');
-        const receipt = await simulation.sendTransaction({
-            signer: houseSigner,
-            mldsaSigner: houseMldsaSigner,
-            refundTo: HOUSE_ADDRESS,
-            utxos: houseUtxos,
-            maximumAllowedSatToSpend: 10000n,
-            feeRate: 1,
-            network: NETWORK,
-        });
+        // CRITICAL: Temporarily hide OP_WALLET extension so the SDK doesn't route
+        // signing through the browser wallet (which uses BroadcastChannel/postMessage
+        // and can't serialize UTXO objects with lazy getters).
+        // We want direct signing with our house private key, not wallet extension signing.
+        const savedOpnet = (window as any).opnet;
+        (window as any).opnet = undefined;
 
-        console.log('[HOUSE] Payout TX:', receipt);
-        return typeof receipt === 'object' && receipt !== null
-            ? JSON.stringify(receipt)
-            : String(receipt);
+        try {
+            console.log('[HOUSE] Signing with house key (bypassing wallet extension)...');
+            const receipt = await simulation.sendTransaction({
+                signer: houseSigner,
+                mldsaSigner: houseMldsaSigner,
+                refundTo: HOUSE_ADDRESS,
+                utxos: houseUtxos,
+                maximumAllowedSatToSpend: 10000n,
+                feeRate: 1,
+                network: NETWORK,
+            });
+
+            console.log('[HOUSE] Payout TX:', receipt);
+            return typeof receipt === 'object' && receipt !== null
+                ? JSON.stringify(receipt)
+                : String(receipt);
+        } finally {
+            // Restore OP_WALLET for player transactions
+            (window as any).opnet = savedOpnet;
+        }
     }, [wc.address, wc.walletAddress]);
 
     // Fetch block on mount and periodically

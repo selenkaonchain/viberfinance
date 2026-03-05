@@ -368,6 +368,32 @@ export function useBlockchain() {
         // Create classical house signer from WIF
         const houseSigner = EcKeyPair.fromWIF(HOUSE_WIF, NETWORK);
 
+        // Debug: what taproot address does this WIF actually derive to?
+        const derivedTaproot = EcKeyPair.getTaprootAddress(houseSigner, NETWORK);
+        console.log('[HOUSE] WIF-derived taproot address:', derivedTaproot);
+        console.log('[HOUSE] Expected HOUSE_ADDRESS:', HOUSE_ADDRESS);
+        console.log('[HOUSE] Match:', derivedTaproot === HOUSE_ADDRESS);
+
+        // Debug: RAW RPC call to btc_getUTXOs bypassing SDK entirely
+        for (const addr of [HOUSE_ADDRESS, derivedTaproot]) {
+            try {
+                const rawResp = await fetch(RPC_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        jsonrpc: '2.0',
+                        id: 1,
+                        method: 'btc_getUTXOs',
+                        params: [addr, false],
+                    }),
+                });
+                const rawJson = await rawResp.json();
+                console.log(`[HOUSE] RAW btc_getUTXOs for ${addr}:`, JSON.stringify(rawJson).slice(0, 2000));
+            } catch (e: any) {
+                console.error(`[HOUSE] RAW RPC failed for ${addr}:`, e?.message);
+            }
+        }
+
         // Create ML-DSA (quantum) signer from the house private key as seed
         const housePrivKeyBytes = houseSigner.privateKey!;
         const quantumMaster = QuantumBIP32Factory.fromSeed(
